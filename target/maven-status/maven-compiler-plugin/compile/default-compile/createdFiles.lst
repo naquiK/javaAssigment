@@ -1,0 +1,16 @@
+com\quizapp\service\QuizService.class
+com\quizapp\dao\QuizDAO.class
+com\quizapp\model\QuizResult.class
+com\quizapp\model\Question.class
+com\quizapp\dao\UserDAO.class
+com\quizapp\ui\ConsoleUI.class
+com\quizapp\util\DatabaseConnection.class
+com\quizapp\model\Admin.class
+com\quizapp\QuizApplication.class
+com\quizapp\model\Student.class
+com\quizapp\service\AuthService.class
+com\quizapp\exception\DatabaseException.class
+com\quizapp\dao\QuizResultDAO.class
+com\quizapp\dao\QuestionDAO.class
+com\quizapp\model\Quiz.class
+com\quizapp\model\User.class
