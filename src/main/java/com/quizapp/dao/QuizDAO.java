@@ -7,11 +7,12 @@ import com.quizapp.util.DatabaseConnection;
 
 import java.sql.*;
 import java.util.ArrayList;
+import java.util.Arrays;
+import java.util.HashMap;
 import java.util.List;
+import java.util.Map;
 
 public class QuizDAO {
-    
-    private QuestionDAO questionDAO = new QuestionDAO();
     
     public void addQuiz(Quiz quiz) throws DatabaseException {
         String sql = "INSERT INTO quizzes (title) VALUES (?)";
@@ -33,7 +34,7 @@ public class QuizDAO {
                     
                     // Add quiz questions
                     for (Question question : quiz.getQuestions()) {
-                        addQuizQuestion(quiz.getId(), question.getId());
+                        addQuizQuestion(conn, quiz.getId(), question.getId());
                     }
                 } else {
                     throw new DatabaseException("Creating quiz failed, no ID obtained.");
@@ -44,15 +45,12 @@ public class QuizDAO {
         }
     }
     
-    private void addQuizQuestion(int quizId, int questionId) throws DatabaseException {
+    private void addQuizQuestion(Connection conn, int quizId, int questionId) throws DatabaseException {
         String sql = "INSERT INTO quiz_questions (quiz_id, question_id) VALUES (?, ?)";
         
-        try (Connection conn = DatabaseConnection.getConnection();
-             PreparedStatement stmt = conn.prepareStatement(sql)) {
-            
+        try (PreparedStatement stmt = conn.prepareStatement(sql)) {
             stmt.setInt(1, quizId);
             stmt.setInt(2, questionId);
-            
             stmt.executeUpdate();
         } catch (SQLException e) {
             throw new DatabaseException("Error adding quiz question: " + e.getMessage(), e);
@@ -60,74 +58,105 @@ public class QuizDAO {
     }
     
     public Quiz getQuizById(int id) throws DatabaseException {
-        String sql = "SELECT * FROM quizzes WHERE id = ?";
+        // First, get the quiz details
+        Quiz quiz = null;
+        String quizSql = "SELECT * FROM quizzes WHERE id = ?";
         
         try (Connection conn = DatabaseConnection.getConnection();
-             PreparedStatement stmt = conn.prepareStatement(sql)) {
+             PreparedStatement stmt = conn.prepareStatement(quizSql)) {
             
             stmt.setInt(1, id);
             
             try (ResultSet rs = stmt.executeQuery()) {
                 if (rs.next()) {
                     String title = rs.getString("title");
-                    List<Question> questions = getQuizQuestions(id);
+                    quiz = new Quiz(id, title, new ArrayList<>());
+                }
+            }
+            
+            if (quiz != null) {
+                // Now get the questions for this quiz
+                String questionSql = 
+                    "SELECT q.id, q.text, q.options, q.correct_option_index, q.time_limit " +
+                    "FROM questions q " +
+                    "JOIN quiz_questions qq ON q.id = qq.question_id " +
+                    "WHERE qq.quiz_id = ?";
+                
+                try (PreparedStatement qStmt = conn.prepareStatement(questionSql)) {
+                    qStmt.setInt(1, id);
                     
-                    return new Quiz(id, title, questions);
+                    try (ResultSet qRs = qStmt.executeQuery()) {
+                        List<Question> questions = new ArrayList<>();
+                        while (qRs.next()) {
+                            int qId = qRs.getInt("id");
+                            String text = qRs.getString("text");
+                            String optionsStr = qRs.getString("options");
+                            List<String> options = Arrays.asList(optionsStr.split("\\|"));
+                            int correctOptionIndex = qRs.getInt("correct_option_index");
+                            int timeLimit = qRs.getInt("time_limit");
+                            
+                            questions.add(new Question(qId, text, options, correctOptionIndex, timeLimit));
+                        }
+                        quiz.setQuestions(questions);
+                    }
                 }
             }
         } catch (SQLException e) {
             throw new DatabaseException("Error retrieving quiz: " + e.getMessage(), e);
         }
         
-        return null;
-    }
-    
-    private List<Question> getQuizQuestions(int quizId) throws DatabaseException {
-        List<Question> questions = new ArrayList<>();
-        String sql = "SELECT q.* FROM questions q " +
-                     "JOIN quiz_questions qq ON q.id = qq.question_id " +
-                     "WHERE qq.quiz_id = ?";
-        
-        try (Connection conn = DatabaseConnection.getConnection();
-             PreparedStatement stmt = conn.prepareStatement(sql)) {
-            
-            stmt.setInt(1, quizId);
-            
-            try (ResultSet rs = stmt.executeQuery()) {
-                while (rs.next()) {
-                    int id = rs.getInt("id");
-                    Question question = questionDAO.getQuestionById(id);
-                    if (question != null) {
-                        questions.add(question);
-                    }
-                }
-            }
-        } catch (SQLException e) {
-            throw new DatabaseException("Error retrieving quiz questions: " + e.getMessage(), e);
-        }
-        
-        return questions;
+        return quiz;
     }
     
     public List<Quiz> getAllQuizzes() throws DatabaseException {
-        List<Quiz> quizzes = new ArrayList<>();
-        String sql = "SELECT * FROM quizzes";
+        Map<Integer, Quiz> quizMap = new HashMap<>();
         
-        try (Connection conn = DatabaseConnection.getConnection();
-             Statement stmt = conn.createStatement();
-             ResultSet rs = stmt.executeQuery(sql)) {
-            
-            while (rs.next()) {
-                int id = rs.getInt("id");
-                String title = rs.getString("title");
-                List<Question> questions = getQuizQuestions(id);
+        try (Connection conn = DatabaseConnection.getConnection()) {
+            // First, get all quizzes
+            String quizSql = "SELECT * FROM quizzes";
+            try (Statement stmt = conn.createStatement();
+                 ResultSet rs = stmt.executeQuery(quizSql)) {
                 
-                quizzes.add(new Quiz(id, title, questions));
+                while (rs.next()) {
+                    int id = rs.getInt("id");
+                    String title = rs.getString("title");
+                    quizMap.put(id, new Quiz(id, title, new ArrayList<>()));
+                }
+            }
+            
+            // If we have quizzes, get all questions for all quizzes in one query
+            if (!quizMap.isEmpty()) {
+                String questionSql = 
+                    "SELECT qq.quiz_id, q.id, q.text, q.options, q.correct_option_index, q.time_limit " +
+                    "FROM questions q " +
+                    "JOIN quiz_questions qq ON q.id = qq.question_id";
+                
+                try (Statement qStmt = conn.createStatement();
+                     ResultSet qRs = qStmt.executeQuery(questionSql)) {
+                    
+                    while (qRs.next()) {
+                        int quizId = qRs.getInt("quiz_id");
+                        int qId = qRs.getInt("id");
+                        String text = qRs.getString("text");
+                        String optionsStr = qRs.getString("options");
+                        List<String> options = Arrays.asList(optionsStr.split("\\|"));
+                        int correctOptionIndex = qRs.getInt("correct_option_index");
+                        int timeLimit = qRs.getInt("time_limit");
+                        
+                        Question question = new Question(qId, text, options, correctOptionIndex, timeLimit);
+                        
+                        // Add this question to its quiz
+                        Quiz quiz = quizMap.get(quizId);
+                        if (quiz != null) {
+                            quiz.getQuestions().add(question);
+                        }
+                    }
+                }
             }
         } catch (SQLException e) {
             throw new DatabaseException("Error retrieving quizzes: " + e.getMessage(), e);
         }
         
-        return quizzes;
+        return new ArrayList<>(quizMap.values());
     }
 }

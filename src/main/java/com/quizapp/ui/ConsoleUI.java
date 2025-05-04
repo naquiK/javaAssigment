@@ -359,8 +359,12 @@ public class ConsoleUI {
             
             System.out.println("\nStarting Quiz: " + quiz.getTitle());
             System.out.println("Total Questions: " + quiz.getTotalQuestions());
-            System.out.println("Press Enter to begin...");
-            scanner.nextLine();
+            System.out.println("Quiz will begin in 3 seconds...");
+            try {
+                Thread.sleep(3000);
+            } catch (InterruptedException e) {
+                // Ignore
+            }
             
             int score = quizService.takeQuiz(quiz, authService.getCurrentUser().getId());
             

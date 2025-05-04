@@ -9,6 +9,8 @@ import com.quizapp.model.Quiz;
 import com.quizapp.model.QuizResult;
 
 import java.util.List;
+import java.util.Scanner;
+import java.util.concurrent.CountDownLatch;
 import java.util.concurrent.Executors;
 import java.util.concurrent.ScheduledExecutorService;
 import java.util.concurrent.TimeUnit;
@@ -18,11 +20,13 @@ public class QuizService {
     private QuestionDAO questionDAO;
     private QuizDAO quizDAO;
     private QuizResultDAO quizResultDAO;
+    private Scanner scanner;
     
     public QuizService() {
         this.questionDAO = new QuestionDAO();
         this.quizDAO = new QuizDAO();
         this.quizResultDAO = new QuizResultDAO();
+        this.scanner = new Scanner(System.in);
     }
     
     public void addQuestion(Question question) throws DatabaseException {
@@ -68,12 +72,10 @@ public class QuizService {
     public int takeQuiz(Quiz quiz, int studentId) {
         int score = 0;
         
-        // Loop through all questions in the quiz
         for (Question question : quiz.getQuestions()) {
             score += takeQuestion(question) ? 1 : 0;
         }
         
-        // Save quiz result
         try {
             QuizResult result = new QuizResult(studentId, quiz.getId(), score, quiz.getTotalQuestions());
             saveQuizResult(result);
@@ -87,55 +89,89 @@ public class QuizService {
     private boolean takeQuestion(Question question) {
         question.display();
         
-        // Time tracking logic
         AtomicBoolean timeExpired = new AtomicBoolean(false);
         AtomicBoolean answered = new AtomicBoolean(false);
+        final CountDownLatch latch = new CountDownLatch(1);
+        final int[] selectedOption = new int[1]; 
+        selectedOption[0] = -1;
         
-        // Create a timer thread to handle time expiry
+        // Create a timer thread
         ScheduledExecutorService executor = Executors.newScheduledThreadPool(1);
         executor.schedule(() -> {
             if (!answered.get()) {
                 timeExpired.set(true);
                 System.out.println("\nTime's up! Moving to the next question.");
+                latch.countDown();
             }
         }, question.getTimeLimit(), TimeUnit.SECONDS);
         
-        // Get user input
-        int selectedOption = -1;
-        
-        while (!timeExpired.get() && !answered.get()) {
+        // Create a separate thread for user input
+        Thread inputThread = new Thread(() -> {
             System.out.print("Enter your answer (1-" + question.getOptions().size() + "): ");
+            
             try {
-                // Check if there's input available
-                if (System.in.available() > 0) {
-                    String input = new java.util.Scanner(System.in).nextLine();
-                    try {
-                        selectedOption = Integer.parseInt(input);
-                        if (selectedOption >= 1 && selectedOption <= question.getOptions().size()) {
-                            answered.set(true);
-                        } else {
-                            System.out.println("Invalid option. Please try again.");
+                while (!timeExpired.get() && !answered.get()) {
+                    // Check if there's input available in the console
+                    if (scanner.hasNextLine()) {
+                        String input = scanner.nextLine();
+                        try {
+                            int option = Integer.parseInt(input);
+                            if (option >= 1 && option <= question.getOptions().size()) {
+                                selectedOption[0] = option; // Store the selected option
+                                answered.set(true);
+                                System.out.println("Confirm your Answer...");
+                                latch.countDown(); 
+                                break;
+                            } else {
+                                System.out.println("Invalid option. Please try again.");
+                                System.out.print("Enter your answer (1-" + question.getOptions().size() + "): ");
+                            }
+                        } catch (NumberFormatException e) {
+                            System.out.println("Please enter a number.");
+                            System.out.print("Enter your answer (1-" + question.getOptions().size() + "): ");
                         }
-                    } catch (NumberFormatException e) {
-                        System.out.println("Please enter a number.");
                     }
+                 
+                    Thread.sleep(100);
                 }
-                // Sleep a bit to prevent CPU hogging
-                Thread.sleep(100);
-            } catch (Exception e) {
-                System.err.println("Error reading input: " + e.getMessage());
+            } catch (InterruptedException e) {
+              
             }
+        });
+        
+     
+        inputThread.start();
+        
+        try {
+
+            latch.await();
+            
+           
+            executor.shutdownNow();
+            if (!answered.get()) {
+                inputThread.interrupt();
+            }
+            
+      
+            inputThread.join(1000);
+
+            if (inputThread.isAlive()) {
+                inputThread.interrupt();
+            }
+
+            while (scanner.hasNextLine() && scanner.nextLine().isEmpty()) {
+                
+            }
+            
+
+            if (answered.get()) {
+            
+                return question.isCorrect(selectedOption[0] - 1);
+            }
+        } catch (InterruptedException e) {
+            System.err.println("Question interrupted: " + e.getMessage());
         }
         
-        executor.shutdownNow();
-        
-        // Return false if time expired
-        if (timeExpired.get()) {
-            return false;
-        }
-        
-        // Convert from 1-based to 0-based indexing
-        return question.isCorrect(selectedOption - 1);
+        return false;
     }
 }
-
